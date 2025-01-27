@@ -1,8 +1,9 @@
 # RecommenderSys-Basic
-Creating a basic review based product recommender using Amazon reviews and Spark
-
-Timeline:
-9/26-27: Setting up basic Spark project and figuring out data storage
+Creating basic review based product recommenders using Spark and varying methods and data
 
 Resources: 
-Data - https://cseweb.ucsd.edu/~jmcauley/datasets.html#amazon_reviews
+Data:
+https://cseweb.ucsd.edu/~jmcauley/datasets.html#amazon_reviews
+
+Matrix Factorization:
+https://datajobs.com/data-science-repo/Recommender-Systems-[Netflix].pdf
