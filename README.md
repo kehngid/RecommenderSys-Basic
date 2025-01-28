@@ -11,3 +11,4 @@ https://towardsdatascience.com/recommender-systems-matrix-factorization-using-py
 
 Papers:
 https://static.googleusercontent.com/media/research.google.com/en//pubs/archive/45530.pdf (to read)
+https://ieeexplore.ieee.org/document/5197422 (to read)
