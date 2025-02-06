@@ -97,6 +97,12 @@ print("Total reviews: ", mod_df.count())
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ### Come back too!
+# MAGIC Somehow while adding id's, several reviews and a reviewer has gone missing. Trying to track down what went wrong here.
+
+# COMMAND ----------
+
 df.createOrReplaceTempView("all_data")
 mod_df.createOrReplaceTempView("mod_data")
 
@@ -119,7 +125,7 @@ spark.sql("""
 
 # COMMAND ----------
 
-overall_reviews_df = df['review_profilename', 'beer_beerid', 'review_overall']
+overall_reviews_df = mod_df['review_userid', 'beer_beerid', 'review_overall']
 overall_reviews_df.show()
 
 # COMMAND ----------
@@ -143,10 +149,30 @@ train, test = overall_reviews_df.randomSplit([.8, .2])
 
 # COMMAND ----------
 
-user_n = train.select("review_profilename").distinct().count()
+user_n = train.select("review_userid").distinct().count()
 item_n = train.select("beer_beerid").distinct().count()
 
 print("Matrix: ", user_n, " x ", item_n)
+
+
+# COMMAND ----------
+
+col_ptrs = [0]
+row_indices = []
+values = []
+
+for row in mod_df:
+    row_indices.append(row["review_userid"])
+    values.append(row["review_overall"])
+
+    col_ptrs.append(col_ptrs[-1] + 1)
+
+col_ptrs = col_ptrs.tolist()
+
+sparse_matrix = SparseMatrix(num_users, num_items, col_ptrs, row_indices, values)
+
+print("Sparse Matrix:", sparse_matrix)
+
 
 # COMMAND ----------
 
@@ -158,6 +184,8 @@ print("Matrix: ", user_n, " x ", item_n)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Parameters
+# MAGIC ratings - a sparse matrix
 # MAGIC ## Hyperparameters:
 # MAGIC n_factors - the number of factors used in the matrix factorization
 # MAGIC
@@ -178,4 +206,8 @@ class MatrixFactorization1():
     self.n_iter = n_iter
 
     
+
+
+# COMMAND ----------
+
 
