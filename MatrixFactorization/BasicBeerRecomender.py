@@ -46,14 +46,22 @@ all_usernames.show()
 
 # COMMAND ----------
 
+all_beerids = df.select("beer_beerid").distinct().sort('beer_beerid')
+
+all_beerids = all_beerids.rdd.zipWithIndex()
+# return back to dataframe
+all_beerids = all_beerids.toDF()
+
+
+all_beerids.show()
+
+# COMMAND ----------
+
 all_usernames.createOrReplaceTempView("profile_ids")
 df.createOrReplaceTempView("all_data")
 
 spark.sql("DESCRIBE TABLE all_data;").show()
 spark.sql("DESCRIBE TABLE profile_ids;").show()
-
-
-# COMMAND ----------
 
 replaced_names = spark.sql("""
     SELECT * 
@@ -64,6 +72,29 @@ replaced_names = spark.sql("""
 
 mod_df = replaced_names.drop("_1").withColumnRenamed("_2", "review_userid") 
 mod_df.show()
+
+
+# COMMAND ----------
+
+mod_df.printSchema()
+
+# COMMAND ----------
+
+all_beerids.createOrReplaceTempView("beer_ids")
+mod_df.createOrReplaceTempView("mod_data")
+
+spark.sql("DESCRIBE TABLE mod_data;").show()
+spark.sql("DESCRIBE TABLE beer_ids;").show()
+
+replaced_beerids = spark.sql("""
+    SELECT * 
+    FROM mod_data 
+    JOIN beer_ids 
+    ON mod_data.beer_beerid = beer_ids._1.beer_beerid
+""")
+
+mod_df = replaced_beerids.drop("_1").withColumnRenamed("_2", "mod_beerid") 
+mod_df.printSchema()
 
 # COMMAND ----------
 
@@ -95,11 +126,32 @@ print("Total number of unique users: ", mod_df.select("review_profilename").dist
 print("Total number of unique user ids: ", mod_df.select("review_userid").distinct().count())
 print("Total reviews: ", mod_df.count())
 
+# Checking that the number of beer ids remained the same
+print("Total number of unique beers: ", mod_df.select("beer_beerid").distinct().count())
+print("Total number of modified beer ids: ", mod_df.select("mod_beerid").distinct().count())
+
+
+
+# COMMAND ----------
+
+from pyspark.sql.functions import min, max
+
+#Checking the range of beer ids, need them to be 0-max # of beers
+print(mod_df.agg(min('mod_beerid'), max('mod_beerid')).collect()[0])
+
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **If you're checking outputs might notice a discrepency between distinct count of modified beer ids and the max id. Idk what thats about**
+
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Come back too!
 # MAGIC Somehow while adding id's, several reviews and a reviewer has gone missing. Trying to track down what went wrong here.
+# MAGIC
+# MAGIC **2/11 Note: Profile numbers line up now**
 
 # COMMAND ----------
 
@@ -125,7 +177,7 @@ spark.sql("""
 
 # COMMAND ----------
 
-overall_reviews_df = mod_df['review_userid', 'beer_beerid', 'review_overall']
+overall_reviews_df = mod_df['review_userid', 'mod_beerid', 'review_overall']
 overall_reviews_df.show()
 
 # COMMAND ----------
@@ -150,29 +202,25 @@ train, test = overall_reviews_df.randomSplit([.8, .2])
 # COMMAND ----------
 
 user_n = train.select("review_userid").distinct().count()
-item_n = train.select("beer_beerid").distinct().count()
+item_n = train.select("mod_beerid").distinct().count()
 
 print("Matrix: ", user_n, " x ", item_n)
 
 
 # COMMAND ----------
 
-col_ptrs = [0]
-row_indices = []
-values = []
+# MAGIC %md
+# MAGIC Though about converting to coordinate matrix but realized the way I was implementing the model need custom tranformations, which are easier to apply to an RDD
 
-for row in mod_df:
-    row_indices.append(row["review_userid"])
-    values.append(row["review_overall"])
+# COMMAND ----------
 
-    col_ptrs.append(col_ptrs[-1] + 1)
+"""
+from pyspark.mllib.linalg.distributed import CoordinateMatrix, MatrixEntry
 
-col_ptrs = col_ptrs.tolist()
+matrix_entries = overall_reviews_df.rdd.map(lambda x: MatrixEntry(x["review_userid"], x["mod_beerid"], x["review_overall"]))
 
-sparse_matrix = SparseMatrix(num_users, num_items, col_ptrs, row_indices, values)
-
-print("Sparse Matrix:", sparse_matrix)
-
+coord_matrix = CoordinateMatrix(matrix_entries)
+"""
 
 # COMMAND ----------
 
@@ -185,8 +233,9 @@ print("Sparse Matrix:", sparse_matrix)
 
 # MAGIC %md
 # MAGIC ## Parameters
-# MAGIC ratings - a sparse matrix
-# MAGIC ## Hyperparameters:
+# MAGIC ratings - a RDD with columns: user index, item index, review
+# MAGIC   With all indices starting at 0 and consecutive
+# MAGIC ## Hyperparameters
 # MAGIC n_factors - the number of factors used in the matrix factorization
 # MAGIC
 # MAGIC l_rate - the step size during gradient descent
@@ -194,20 +243,93 @@ print("Sparse Matrix:", sparse_matrix)
 # MAGIC alpha - regularization parameter
 # MAGIC
 # MAGIC n_iter - the number of iterations
+# MAGIC ## Methods
+# MAGIC initalize(): Here I'm initalizing the user and beer embeddings with just random normal distribution, there are other methods for initalization though. 
+
+# COMMAND ----------
+
+# Libraries involved in the model
+import numpy as np
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Note: Need to make sure id's work out, also parallelizing perdict task!!**
 
 # COMMAND ----------
 
 class MatrixFactorization1():
-  def init(self, ratings, n_factors=100, l_rate=0.01, alpha=0.01, n_iter=100):
+  def __init__(self, ratings, n_users, n_items, n_factors=100, l_rate=0.01, alpha=0.01, n_iter=100):
     self.ratings = ratings
     self.n_factors = n_factors
     self.l_rate = l_rate
     self.alpha = alpha
     self.n_iter = n_iter
 
+    self.n_users = n_users
+    self.n_items = n_items
+
+  def initalize(self, ):
+    self.user_vecs = self.createEmbeddings(n_users)
+    self.item_vecs = self.createEmbeddings(n_items)
+
+    self.evaluate(0)
+  
+  def evaluate(self, epoch):
+    total_sq_err = 0 
+    predictions = self.predict()
+    sq_err = self.ratings.map(lambda review: review[2]).zip(predictions).map(lambda pair: (pair[0] - pair[1])**2)
+    total_sq_errs = sq_err.sum()
+    mse = total_sq_errs / self.ratings.count()
+  
+  def predict(self, ):
+    predictions = self.ratings.map(lambda review: numpy.dot(self.user_vecs[review[0]], self.item_vecs[review[1]]))
+    return predictions
+  
+  def update(self, error):
+    self.user_vecs[u, :] += self.l_rate*(error*self.item_vecs[i, :] - self.alpha*self.user_vecs[u, :])
+
+    self.user_vecs.zip(errors).map(lambda vector: self.l_rate * (vector[1] * ))
+  
+  def fit(self, ):
+    self.initalize()
+    for epoch in range(0, self.n_iter):
+      prediction = self.predict()
+      err = self.ratings.map(lambda review: review[2]).zip(predictions).map(lambda pair: (pair[0] - pair[1]))
+      self.update(err)
+
     
+  def createEmbeddings(self, n_rows):
+    embedding_rdd = sc.parallelize([1] * n_rows * self.n_factors).map(lambda x: np.random.normal(scale = 1/np.sqrt(self.n_factors), size = self.n_factors))
+
+
+  
+
 
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC # Testing
 
+# COMMAND ----------
+
+import numpy as np
+from pyspark.mllib.linalg.distributed import DenseMatrix
+
+#embedding_values = sc.parallelize([1] * 10).map(lambda x: np.random.normal(scale = 1/np.sqrt(5), size = 5).tolist())
+embedding_rdd = sc.parallelize([1] * 10).map(lambda x: np.random.normal(scale = 1/np.sqrt(5), size= 5))
+
+embedding_rdd.take(10)
+
+
+# COMMAND ----------
+
+spark = SparkSession.builder.appName("CustomClassExample").getOrCreate()
+    
+# Using the custom class in a map transformation
+result_rdd = overall_reviews_df.map(lambda x: MatrixFactorization(x).process())
+    
+print(result_rdd.collect())
+    
+spark.stop()
