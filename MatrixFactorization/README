@@ -1,3 +1,7 @@
 This is an explination of the recommender systems contained in this folder.
 
-BasicBeerRecommender - this is my first attempt at matrix facotirzation, it uses SGD to learn, no validation set, and only uses beer ids, profile names, and overall reviews to recommend. It is different from other implementations of matrix factorization in that it attempts to utilize the parallelism available through using Apache Spark. Will be comparing to Spark MLlib's matrixFactorization model.
+BasicBeerRecommender - this is my first attempt at matrix facotirzation, it uses SGD to learn, no validation set, 
+  and only uses beer ids, profile names, and overall reviews to recommend. It is different from other implementations  
+  of matrix factorization in that it attempts to utilize the parallelism available through using Apache Spark. 
+  
+  Will be comparing to Spark MLlib's matrixFactorization model.
