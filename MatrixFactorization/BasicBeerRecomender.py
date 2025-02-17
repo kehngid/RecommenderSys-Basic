@@ -281,15 +281,36 @@ class MatrixFactorization1():
     sq_err = self.ratings.map(lambda review: review[2]).zip(predictions).map(lambda pair: (pair[0] - pair[1])**2)
     total_sq_errs = sq_err.sum()
     mse = total_sq_errs / self.ratings.count()
+
+    print(f"---> Epoch {epoch}")
+    print("MSE: ", mse)
   
   def predict(self, ):
     predictions = self.ratings.map(lambda review: numpy.dot(self.user_vecs[review[0]], self.item_vecs[review[1]]))
     return predictions
   
+  # Will want to split into smaller functions! And probably clean up 
   def update(self, error):
-    self.user_vecs[u, :] += self.l_rate*(error*self.item_vecs[i, :] - self.alpha*self.user_vecs[u, :])
+    seqFunc = (lambda x, y: x + y)
+    combFunc = (lambda x, y: x + y)
 
-    self.user_vecs.zip(errors).map(lambda vector: self.l_rate * (vector[1] * ))
+    # review[1] = error of the review 
+    # review[0][x] = (user id, item id, real rating)
+    user_vec_gradients = self.l_rate * (self.ratings.zip(error).map(lambda review: review[1] * self.item_vecs[review[0][1]] - self.alpha * self.user_vecs[review[0][0]]))
+    
+    # Combining the gradients for each vector
+    agg_u_grads = self.ratings.map(lambda review: review[0]).zip(user_vec_gradients).aggregateByKey(0, seqFunc, combFunc)
+
+    updated_u = self.user_vecs.zip(agg_u_grads).map(lambda user_vecs: user_vecs[0] + user_vecs[1][1])
+
+    # Will probably need to check closer
+    item_vec_gradients = self.l_rate * (self.ratings.zip(error).map(lambda review: review[1] * self.user_vecs[review[0][0]] - self.alpha * self.item_vecs[review[0][1]]))
+    
+    # Combining the gradients for each vector
+    agg_i_grads = self.ratings.map(lambda review: review[1]).zip(item_vec_gradients).aggregateByKey(0, seqFunc, combFunc)
+    
+    updated_i = self.item_vecs.zip(agg_i_grads).map(lambda item_vecs: item_vecs[0] + item_vecs[1][1])
+
   
   def fit(self, ):
     self.initalize()
@@ -297,14 +318,11 @@ class MatrixFactorization1():
       prediction = self.predict()
       err = self.ratings.map(lambda review: review[2]).zip(predictions).map(lambda pair: (pair[0] - pair[1]))
       self.update(err)
+      self.evaluate(epoch)
 
     
   def createEmbeddings(self, n_rows):
     embedding_rdd = sc.parallelize([1] * n_rows * self.n_factors).map(lambda x: np.random.normal(scale = 1/np.sqrt(self.n_factors), size = self.n_factors))
-
-
-  
-
 
 
 # COMMAND ----------
@@ -317,11 +335,18 @@ class MatrixFactorization1():
 import numpy as np
 from pyspark.mllib.linalg.distributed import DenseMatrix
 
-#embedding_values = sc.parallelize([1] * 10).map(lambda x: np.random.normal(scale = 1/np.sqrt(5), size = 5).tolist())
-embedding_rdd = sc.parallelize([1] * 10).map(lambda x: np.random.normal(scale = 1/np.sqrt(5), size= 5))
+data = [(1, 1), (1, 1), (2, 1), (3, 1), (3, 1)]
+rdd = sc.parallelize(data)
 
-embedding_rdd.take(10)
+keys = [1, 0, 3]
+key_rdd = sc.parallelize(keys)
 
+print(rdd.aggregateByKey(0, lambda x,y: x + y, lambda x,y: x + y).take(3))
+
+rdd = sc.parallelize([("a", 1), ("b", 1), ("a", 2)])
+seqFunc = (lambda x, y: x + y)
+combFunc = (lambda x, y: x + y)
+print(sorted(rdd.aggregateByKey(0, seqFunc, combFunc).collect()))
 
 # COMMAND ----------
 
